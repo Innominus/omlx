@@ -41,7 +41,6 @@ import mlx.core as mx
 
 from ..api.tool_calling import convert_tools_for_template
 from ..api.utils import (
-    clean_special_tokens,
     detect_and_strip_partial,
     remove_special_tokens_preserve_whitespace,
 )
@@ -4841,7 +4840,9 @@ class VLMBatchedEngine(BaseEngine):
             **specprefill_kwargs,
         )
 
-        text = clean_special_tokens(output.output_text)
+        # A raw completion's leading space is content, so keep the model's
+        # whitespace; chat callers clean it themselves.
+        text = remove_special_tokens_preserve_whitespace(output.output_text)
 
         return GenerationOutput(
             text=text,
@@ -4964,7 +4965,7 @@ class VLMBatchedEngine(BaseEngine):
         finished_normally = False
         try:
             async for output in engine.stream_outputs(request_id):
-                text = clean_special_tokens(output.output_text)
+                text = remove_special_tokens_preserve_whitespace(output.output_text)
 
                 if output.finished:
                     finished_normally = True

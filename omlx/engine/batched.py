@@ -14,7 +14,10 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from ..api.tool_calling import convert_tools_for_template
-from ..api.utils import clean_special_tokens, detect_and_strip_partial
+from ..api.utils import (
+    detect_and_strip_partial,
+    remove_special_tokens_preserve_whitespace,
+)
 from ..model_settings import (
     ane_prefill_backend,
     ane_prefill_fraction,
@@ -1152,7 +1155,9 @@ class BatchedEngine(BaseEngine):
             **specprefill_kwargs,
         )
 
-        text = clean_special_tokens(output.output_text)
+        # A raw completion's leading space is content, so keep the model's
+        # whitespace; chat callers clean it themselves.
+        text = remove_special_tokens_preserve_whitespace(output.output_text)
 
         return GenerationOutput(
             text=text,
@@ -1241,7 +1246,7 @@ class BatchedEngine(BaseEngine):
         finished_normally = False
         try:
             async for output in engine.stream_outputs(request_id):
-                text = clean_special_tokens(output.output_text)
+                text = remove_special_tokens_preserve_whitespace(output.output_text)
 
                 # Set finished_normally BEFORE yield, because the consumer
                 # may stop iterating after receiving the final output,

@@ -360,6 +360,22 @@ def repair_misconverted_unlimited_ocr_tokenizer(
     return True
 
 
+@lru_cache(maxsize=1)
+def _no_trim_bpe_detokenizer_class() -> Callable[[Any], Any]:
+    """mlx-lm's byte-level BPE detokenizer without its first-space trim.
+
+    mlx-lm#1024 made that trim unconditional; for raw text the space is content
+    — it separates the prompt from the continuation it completes.
+    """
+    from mlx_lm.tokenizer_utils import BPEStreamingDetokenizer
+
+    class _NoTrimBPEStreamingDetokenizer(BPEStreamingDetokenizer):
+        def _maybe_trim_space(self, current_text):
+            return current_text
+
+    return _NoTrimBPEStreamingDetokenizer
+
+
 @lru_cache(maxsize=128)
 def _detokenizer_factory_from_tokenizer_json(
     tokenizer_file: str,
@@ -370,7 +386,6 @@ def _detokenizer_factory_from_tokenizer_json(
 
     try:
         from mlx_lm.tokenizer_utils import (
-            BPEStreamingDetokenizer,
             SPMStreamingDetokenizer,
             _is_bpe_decoder,
             _is_spm_decoder,
@@ -385,16 +400,18 @@ def _detokenizer_factory_from_tokenizer_json(
     if _is_spm_decoder_no_space(decoder):
         return partial(SPMStreamingDetokenizer, trim_space=False)
     if _is_bpe_decoder(decoder):
-        return BPEStreamingDetokenizer
+        # No declared Strip step, so the leading space is content.
+        return _no_trim_bpe_detokenizer_class()
     return None
 
 
-def _is_unsafe_mlx_vlm_bpe_detokenizer(detokenizer: Any) -> bool:
-    detokenizer_type = type(detokenizer)
-    return (
-        detokenizer_type.__module__ == "mlx_vlm.tokenizer_utils"
-        and detokenizer_type.__name__ == "BPEStreamingDetokenizer"
-    )
+def _is_foreign_bpe_detokenizer(detokenizer: Any) -> bool:
+    """Whether ``detokenizer`` is mlx-lm's or mlx-vlm's BPE detokenizer.
+
+    Both drop the generation's first space (mlx-lm#1024), and mlx-vlm's also
+    shares mutable state across streams, so oMLX replaces either with its own.
+    """
+    return type(detokenizer).__name__ == "BPEStreamingDetokenizer"
 
 
 def _create_decoder_aware_detokenizer(
@@ -486,6 +503,8 @@ def create_streaming_detokenizer(
         # The file incorrectly declares an SPM decoder even though its vocab
         # contains byte-level BPE tokens.  Always create a fresh request-local
         # BPE detokenizer so concurrent streams cannot share mutable state.
+        # Its declared decoder does carry Strip(" ", 1, 0), so mlx-lm's
+        # trimming class is the right one here.
         try:
             from mlx_lm.tokenizer_utils import BPEStreamingDetokenizer
 
@@ -509,16 +528,12 @@ def create_streaming_detokenizer(
         logger.debug("Failed to read tokenizer.detokenizer: %s", exc)
 
     if detokenizer is not None:
-        if _is_unsafe_mlx_vlm_bpe_detokenizer(detokenizer):
-            decoder_aware_detokenizer = _create_decoder_aware_detokenizer(
+        if _is_foreign_bpe_detokenizer(detokenizer):
+            # Byte-level BPE: use oMLX's request-local, no-trim detokenizer.
+            return _fresh_detokenizer(
                 tokenizer,
-                tokenizer_file,
-            )
-            if decoder_aware_detokenizer is not None:
-                return decoder_aware_detokenizer
-            logger.debug(
-                "Using existing mlx-vlm BPE detokenizer because no "
-                "decoder-aware replacement is available"
+                "bpe-no-trim",
+                lambda: _no_trim_bpe_detokenizer_class()(tokenizer),
             )
         return detokenizer
 

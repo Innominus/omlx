@@ -26,9 +26,10 @@ from omlx.engine.base import BaseEngine, BaseNonStreamingEngine, GenerationOutpu
 class FakeStreamingCore:
     """Minimal async engine core for stream cleanup tests."""
 
-    def __init__(self):
+    def __init__(self, output_text="partial"):
         self.aborted_request_id = None
         self.add_request_kwargs = None
+        self.output_text = output_text
 
     async def add_request(self, **kwargs):
         self.add_request_kwargs = kwargs
@@ -36,8 +37,8 @@ class FakeStreamingCore:
 
     async def stream_outputs(self, request_id):
         yield SimpleNamespace(
-            output_text="partial",
-            new_text="partial",
+            output_text=self.output_text,
+            new_text=self.output_text,
             prompt_tokens=1,
             completion_tokens=1,
             finished=False,
@@ -420,6 +421,22 @@ class TestBatchedEngineStreamingCleanup:
         await stream.aclose()
 
         assert fake_engine.add_request_kwargs["request_id"] == "req-progress"
+
+    @pytest.mark.asyncio
+    async def test_stream_text_keeps_the_generations_leading_space(self):
+        """A raw completion keeps its leading space; chat callers strip again."""
+        from omlx.engine.batched import BatchedEngine
+
+        fake_engine = FakeStreamingCore(output_text=" for SuperManager <|im_end|>")
+        engine = BatchedEngine(model_name="test-model")
+        engine._loaded = True
+        engine._engine = fake_engine
+
+        stream = engine.stream_generate("impl Default")
+        first = await stream.__anext__()
+        await stream.aclose()
+
+        assert first.text == " for SuperManager "
 
 
 class TestBatchedEngineApplyChatTemplate:

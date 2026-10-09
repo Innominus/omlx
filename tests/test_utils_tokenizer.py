@@ -63,6 +63,10 @@ class _ByteFallbackTokenizer:
 
 class _BpeTokenizer:
 
+    def __init__(self, vocab=None):
+        if vocab is not None:
+            self.vocab = vocab
+
     def __len__(self):
         return max(self.vocab.values()) + 1
 
@@ -189,7 +193,20 @@ class TestCreateStreamingDetokenizer:
             model_path=tmp_path,
         )
 
-        assert type(detokenizer).__name__ == "BPEStreamingDetokenizer"
+        assert type(detokenizer).__name__ == "_NoTrimBPEStreamingDetokenizer"
+
+    def test_keeps_the_leading_space_for_byte_level_bpe(self, tmp_path):
+        # mlx-lm's BPE detokenizer trims the generation's first space
+        # (mlx-lm#1024); a raw completion needs it.
+        _write_json(tmp_path / "tokenizer.json", {"decoder": {"type": "ByteLevel"}})
+        detokenizer = create_streaming_detokenizer(
+            _BpeTokenizer({"ĠA": 0, "B": 1}),
+            model_path=tmp_path,
+        )
+
+        detokenizer.add_token(0)
+
+        assert detokenizer.last_segment == " A"
 
     def test_replaces_mlx_vlm_bpe_detokenizer_from_tokenizer_json(self, tmp_path):
         _write_json(tmp_path / "tokenizer.json", {"decoder": {"type": "ByteLevel"}})
@@ -205,7 +222,8 @@ class TestCreateStreamingDetokenizer:
 
         detokenizer = create_streaming_detokenizer(tokenizer, model_path=tmp_path)
 
-        assert type(detokenizer).__module__ == "mlx_lm.tokenizer_utils"
+        # oMLX's own no-trim BPE detokenizer replaces mlx-vlm's.
+        assert type(detokenizer).__module__ == "omlx.utils.tokenizer"
         parts = []
         for token_id in [0, 1, 2, 3]:
             detokenizer.add_token(token_id)

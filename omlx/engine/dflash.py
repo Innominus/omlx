@@ -27,7 +27,10 @@ import mlx.core as mx
 
 from ..adapter.output_parser import detect_output_parser
 from ..api.tool_calling import convert_tools_for_template
-from ..api.utils import clean_special_tokens, detect_and_strip_partial
+from ..api.utils import (
+    detect_and_strip_partial,
+    remove_special_tokens_preserve_whitespace,
+)
 from ..cache.observability import CacheRateTracker
 from ..exceptions import PrefillMemoryAbortedError
 from ..memory_monitor import (
@@ -1971,7 +1974,9 @@ class DFlashEngine(ActivityTrackingMixin, BaseEngine):
             text = "".join(parsed_visible_parts)
         else:
             text = self._tokenizer_obj.decode(generated, skip_special_tokens=True)
-            text = clean_special_tokens(text)
+            # A raw completion's leading space is content, so keep the
+            # model's whitespace; chat callers clean it themselves.
+            text = remove_special_tokens_preserve_whitespace(text)
 
             # Reasoning models (Qwen3.x with enable_thinking, DeepSeek,
             # MiniMax, ...) have <think>\n at the END of the prompt, so the
